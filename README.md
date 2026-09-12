@@ -1,205 +1,214 @@
 # xxscreeps-replay
 
-A server mod for [xxscreeps](https://github.com/laverdet/xxscreeps) that
-records the rooms players are in, every tick, and plays them back:
+Room recorder and replay viewer for [xxscreeps](https://github.com/laverdet/xxscreeps).
 
-- in the **official client's history mode** (the timeline UI screeps.com uses
-  for room history), for any room of any recording, even after the world it
-  came from is gone;
-- on a **world map with a playback bar** (the
-  [shardreplay](https://github.com/DefaultO/shardreplay) viewer, served over
-  the recording).
+The mod records every room a player is in, every tick, into small `.xrr` files.
+You can then scrub through a recording in the official client's history view
+(the same UI screeps.com uses for room history) or on a world map with a
+playback bar. Recordings stay watchable after the world they came from has been
+reset.
 
-Made to study speedruns: a full run to RCL5 (19,000 ticks, nine rooms) is
-2.4 MB on disk.
+I wrote it to look at bot speedruns on a private server. A full run to RCL5
+(about 19,000 ticks over nine rooms) takes 2.4 MB of disk.
 
-![replays index](docs/index.png)
+![the replays index](docs/index.png)
 
-## Install
+## Requirements
 
-In the directory that holds your server's `.screepsrc.yaml`:
+- An xxscreeps server. Node 24 or newer (the codec uses Node's zstd).
+- [`@xxscreeps/client`](https://github.com/laverdet/xxscreeps/tree/main/packages/client),
+  the mod that serves the official browser client from your Steam install of
+  Screeps. All playback happens in that client, so without it there is nothing
+  to look at. Its README explains where it finds `package.nw`.
+- Optional: a checkout of [shardreplay](https://github.com/DefaultO/shardreplay)
+  if you want the world map view.
 
-```sh
-npm install github:DefaultO/xxscreeps-replay
-```
+## Setup
 
-Then list the mod, and the official client, in `.screepsrc.yaml`:
+1. Install the mod in the directory that holds your `.screepsrc.yaml`:
 
-```yaml
-mods:
-  - xxscreeps/mods/classic
-  - xxscreeps/mods/backend/cookie
-  - xxscreeps/mods/backend/password
-  - xxscreeps-replay
-  - '@xxscreeps/client'      # the viewer is the official client; see its README
+   ```sh
+   npm install github:DefaultO/xxscreeps-replay
+   npm install @xxscreeps/client   # if you don't have the browser client yet
+   ```
 
-replay:
-  dir: ./replays             # one sub-directory per recording
-  users: [YourName]          # players (names or ids) whose rooms are recorded;
-                             # default: every player, the stock NPC bots included
-```
+2. Add both mods to `.screepsrc.yaml` and tell the recorder whose rooms to
+   record:
 
-Restart the server. It logs `replay: recording to <dir>/<name>` and
-`http://<host>/replay/` lists the recordings.
+   ```yaml
+   mods:
+     - xxscreeps/mods/classic
+     - xxscreeps/mods/backend/cookie
+     - xxscreeps/mods/backend/password
+     - xxscreeps-replay
+     - '@xxscreeps/client'
 
-The mod needs Node 24 or later (it uses Node's zstd). It works in the
-single-threaded launcher and the multi-threaded one alike; recording happens
-in the backend process, the processor is untouched.
+   replay:
+     dir: ./replays
+     users: [YourName]
+   ```
 
-## Use
+   Without `users` every player is recorded, including the NPC bots that come
+   with a generated world.
 
-Open `http://<host>/replay/`. Each recording shows its rooms as map tiles on
-their world coordinates, the player, the controller levels reached (each one a
-link to the tick it landed), and two buttons:
+3. Start the server. The log shows where it records:
 
-- **World map** — the whole recording on a map with a full-width timeline.
-  Space plays, arrows step, `+`/`-` change the speed, `/` searches a room.
-  Needs `replay.viewer` (below).
-- **Room …** — the official client's history view of the main room. Its
-  slider is bounded to the room's recorded ticks and steps single ticks; the
-  play button, speed and rewind work as on screeps.com.
+   ```
+   replay: recording to /path/to/replays/2026-09-12T10-47-12 (chunks of 200 ticks, zstd)
+   ```
 
-Every room link carries `&code=<recording>~<room>`. That is the client's own
-shared-replay mode; the link works in any browser that can reach the server.
+4. Open `http://localhost:21025/replay/`.
 
-Recording is automatic: every room some player has presence in (creeps or
-structures) is recorded from the tick that presence begins — the spawn
-landing, the first creep spawning. Rooms nobody is in are skipped; the engine
-can reproduce them from terrain alone.
+5. For the world map, clone shardreplay somewhere and point the mod at its
+   `web` directory:
+
+   ```yaml
+   replay:
+     viewer: ../shardreplay/web
+   ```
+
+## Usage
+
+`/replay/` lists all recordings in the replay directory. Each entry shows the
+recorded rooms as map tiles, the player, the controller levels reached, and a
+table of rooms. Click a tile or a room name to open that room in the client's
+history view, or the level markers to jump to the tick a level was reached.
+
+**Room view.** The official client's history mode. Play, pause, change the
+speed, drag the slider. The slider is limited to the ticks that were recorded
+for that room and moves one tick at a time.
+
+**World map.** The shardreplay viewer over the whole recording. Space plays,
+arrow keys step, `+` and `-` change speed, `/` searches for a room. Controller
+level changes and invader raids are marked on the timeline.
+
+Both views work while a recording is still being written.
 
 ### Naming recordings
 
-A recording is named after the time it started unless you say otherwise:
+By default a recording is named after the time it started. To name it
+yourself:
 
-| | |
-|---|---|
-| `replay.name` in the config | fixed name |
-| `XX_REPLAY_NAME=run-42` in the server's environment | per start, for launchers |
-| `XX_REPLAY=0` | do not record at all (a server started just to view) |
-| `XX_REPLAY_DIR`, `XX_REPLAY_VIEWER` | override `dir` and `viewer` |
+- `replay.name` in the config sets a fixed name.
+- `XX_REPLAY_NAME=run-42` in the server's environment names the recording of
+  that start. Useful for scripts that start the server per experiment.
+- `XX_REPLAY=0` starts the server without recording, for example to look at old
+  recordings.
 
-A server killed hard loses at most the chunk it was writing (200 ticks).
-`POST /replay/flush` closes the open chunks first — and saves the world
-stores, which the engine otherwise only does on its own schedule — so a
-launcher can do
+### Stopping the server
+
+Chunks are written every 200 ticks. If the server is killed, the ticks since
+the last chunk are lost. Before killing it, call
 
 ```sh
-curl -X POST http://127.0.0.1:21025/replay/flush && kill <pid>
+curl -X POST http://localhost:21025/replay/flush
 ```
 
-`GET /replay/status` reports frames, bytes and skipped ticks of the current
-recording.
+This writes the open chunks and also saves the world database, which xxscreeps
+otherwise only does on its own schedule.
 
-### The world map viewer
-
-Clone [shardreplay](https://github.com/DefaultO/shardreplay) and point the
-mod at its `web` directory:
-
-```yaml
-replay:
-  viewer: ../shardreplay/web
-```
-
-The page is served unmodified at `/replay/<name>/map/`; the mod answers the
-archive API it speaks (`api/span`, `archive/index.json`,
-`archive/<room>/<base>.json`, `archive/batch`, `archive/snapshot`,
-`api/activity`, `api/season`, `badge/<id>.svg`, `terrain.bin`) from the
-recording. Season standings and reactors do not exist in a recording and
-answer 503, which the page reads as "not computed".
+`GET /replay/status` returns frame and byte counts of the current recording.
 
 ### Badges
 
-A recording keeps each player's badge. Custom badges (the persistent
-world's two-path kind, which xxscreeps' own badge route rejects) are drawn
-by the mod for both viewers. `POST /replay/badge` with `{"badge": {...}}`,
-signed in, stores any badge for the current user — e.g. the one
-`https://screeps.com/api/user/find?username=<you>` returns.
-
-### Configuration
-
-```yaml
-replay:
-  enabled: true          # record at all
-  dir: ./replays         # one sub-directory per recording
-  name: run-42           # recording name (default: the start time)
-  chunkTicks: 200        # ticks per stored chunk; keyframe every chunk
-  historyChunkSize: 100  # ticks per room-history request; divides chunkTicks
-  codec: zstd            # zstd | brotli | none
-  level: 19              # codec level
-  rooms: [W7N3]          # fixed room list (default: every room a player is in)
-  users: [YourName]      # players (names or ids) whose presence picks the rooms
-  asUser: abc123         # render as this user (private says); default: the only player
-  log: true              # a progress line every 1000 ticks
-  viewer: ../shardreplay/web   # the world map page
-```
-
-### The command line
+Recordings keep each player's badge, so replays show it even when the player
+no longer exists on the server. If you want your persistent-world badge on a
+private server, get it from `https://screeps.com/api/user/find?username=YOU`
+and post it while signed in:
 
 ```sh
-npx xrr info    replays/run-42           # rooms, ticks, sizes, bytes per tick
-npx xrr dump    replays/run-42 W7N3 1500 # the room at one tick, as client JSON
-npx xrr history replays/run-42 W7N3 1500 # a room-history window, as the client gets it
-npx xrr verify  replays/run-42           # decode everything, check tick order
-npx xrr keys    replays/run-42 W7N3      # which fields cost the bytes
+curl -X POST http://localhost:21025/replay/badge \
+  -H 'Content-Type: application/json' -H "X-Token: $TOKEN" \
+  -d '{"badge": {...}}'
+```
+
+The stock badge route only accepts the 24 built-in shapes; this one also takes
+custom badges.
+
+## Configuration
+
+All keys under `replay:` in `.screepsrc.yaml`.
+
+| key | default | |
+|---|---|---|
+| `enabled` | `true` | record at all |
+| `dir` | `./replays` | one subdirectory per recording |
+| `name` | start time | recording name |
+| `users` | all players | user names or ids whose rooms are recorded |
+| `rooms` | | fixed room list instead of `users` |
+| `chunkTicks` | `200` | ticks per chunk, keyframe every chunk |
+| `historyChunkSize` | `100` | ticks per request from the client, divides `chunkTicks` |
+| `codec` | `zstd` | `zstd`, `brotli` or `none` |
+| `level` | codec default | compression level |
+| `asUser` | the only player | render as this user (affects private `say` messages) |
+| `viewer` | | path to shardreplay's `web` directory |
+| `log` | `true` | progress line every 1000 ticks |
+
+Environment variables `XX_REPLAY`, `XX_REPLAY_NAME`, `XX_REPLAY_DIR` and
+`XX_REPLAY_VIEWER` override `enabled`, `name`, `dir` and `viewer`.
+
+## Command line
+
+```sh
+npx xrr info    replays/run-42            # rooms, ticks, sizes
+npx xrr dump    replays/run-42 W7N3 1500  # one room at one tick, as JSON
+npx xrr history replays/run-42 W7N3 1500  # a 100-tick window as the client receives it
+npx xrr verify  replays/run-42            # decode everything, check tick order
+npx xrr keys    replays/run-42 W7N3       # which fields take up the bytes
 npx xrr recode  replays/run-42 W7N3 brotli
 ```
 
-## The format
+## How it works
 
-Per room, `<room>.xrr` is a sequence of records: a 28-byte header (`XRRC`,
-codec, first and last tick, frame count, sizes) and a compressed chunk. A
-reader indexes a file by seeking over headers.
+Recording runs in the backend process and does not touch the processor. Each
+tick it loads the rooms the configured players have presence in (creeps or
+structures), renders every object the way the room socket renders it for the
+client, and appends the result to the room's recording. A room is picked up the
+tick its spawn is placed. Rooms nobody is in are not recorded.
 
-A chunk is `chunkTicks` ticks starting with a keyframe. Each frame is the
-room as the official client sees it — every object rendered to the JSON the
-room socket sends — flattened to `path → value`. For every numeric field the
-codec keeps the last value and the last two deltas and predicts the next
-value: a confirmed trend continues (a TTL counting down, a constant harvest,
-a creep walking straight), anything else holds. Only non-zero residuals are
-written, as `key·4+kind` varint codes and zigzag varints, then the chunk is
-zstd-compressed.
+Each room is a file of chunks. A chunk covers `chunkTicks` ticks and starts
+with a full keyframe; the following frames only store what changed. Every
+object is flattened to field paths, and for each numeric field the encoder
+keeps the last value and the last two deltas. If the last two deltas agree it
+predicts the trend continues (a creep walking in a line, a source being
+harvested at a constant rate, a countdown), otherwise it predicts no change.
+Only the difference from the prediction is stored. The chunk is then
+compressed with zstd.
 
-Measured on a bot run to RCL5: 25 KB of client JSON per tick per room
-becomes ~70 B/tick for a busy home room and 5–25 B/tick elsewhere; 165 B
-per game tick across all rooms of a 13-room recording; 1.3–3 ms of backend
-time per tick. `xrr keys` shows where the bytes go (creep `x`/`y` first).
+On a bot run to RCL5 the busy home room came to about 70 bytes per tick and
+remote rooms to 5 to 25 bytes per tick. `xrr keys` tells you which fields cost
+the most; in practice it is creep positions.
 
-`meta.json` holds the players, terrain and tick range per room, the
-controller levels reached, ownership changes and invader raids (the
-timeline's marks), so a recording directory is self-contained. `terrain.bin`
-is the whole world's terrain in the viewer's layout.
+`meta.json` in each recording holds the players, the terrain of each room,
+tick ranges, and the events shown on the timeline. `terrain.bin` holds the
+whole world's terrain for the map view.
 
-## Playback protocol
+## URLs the mod serves
 
-The official client asks, for a replay code `X`:
+- `/replay/` the index.
+- `/replay/<name>/` the official client, wired to that recording. Room links
+  use the client's replay codes: `#!/history/<shard>/<room>?t=<tick>&code=<name>~<room>`.
+- `/replay/<name>/map/` the world map (needs `viewer`).
+- `/replay/flush`, `/replay/status`, `/replay/badge` as described above.
+- `/room-history/<shard>/<room>/<tick>.json` the recording in progress, for the
+  history button of the live client.
 
-| | |
-|---|---|
-| `GET /replay/<name>/api/seasons/replay/X` | `{ok, room, minTime, maxTime, terrain}` |
-| `GET /replay/<name>/api/seasons/replay/X/<base>` | a 100-tick window: the first recorded tick whole, later ticks as diffs, `null` where nothing was recorded |
-| `GET /replay/<name>/api/user/find-shared?id=` | the player, from the recording |
-
-`/replay/<name>/…` is a frozen server over one recording: `config.js`,
-`game/time`, `room-terrain` and the badge route are answered from it and
-everything else (client assets, auth, socket) is forwarded to the live
-server. `/room-history/<shard>/<room>/<base>.json` serves the recording in
-progress to the live client's own history button.
-
-## Develop
+## Development
 
 ```sh
 git clone https://github.com/DefaultO/xxscreeps-replay
 cd xxscreeps-replay
 npm install
-npm run build      # tsc → dist/ (committed, so an install needs no build)
-npm test           # round-trips a synthetic room through the codec
+npm run build
+npm test
 ```
 
-The mod resolves `xxscreeps/…` from wherever it is installed, so for
-development link it into a server's `node_modules` (a junction on Windows)
-rather than installing a second copy of xxscreeps next to it: the engine's
-hook registries are module-level singletons, and a mod that loads its own
-copy of xxscreeps registers into the wrong one.
+`dist/` is committed so that installing from GitHub needs no build. To run a
+development checkout inside a server, link it into the server's
+`node_modules/xxscreeps-replay` (a symlink or junction). Don't install a second
+copy of xxscreeps next to the mod: the engine's hook registries are module
+level singletons, and a mod that imports its own copy of xxscreeps registers
+its hooks into the wrong one.
 
 ## License
 

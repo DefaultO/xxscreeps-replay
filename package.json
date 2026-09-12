@@ -1,0 +1,44 @@
+{
+	"name": "xxscreeps-replay",
+	"version": "0.1.0",
+	"description": "xxscreeps server mod: records the rooms players are in, every tick, to compact .xrr files and plays them back in the official client's history mode and on a world map with a playback bar",
+	"license": "MIT",
+	"author": "DefaultO",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/DefaultO/xxscreeps-replay.git"
+	},
+	"keywords": [
+		"screeps",
+		"xxscreeps",
+		"replay",
+		"room-history"
+	],
+	"type": "module",
+	"xxscreeps": true,
+	"exports": {
+		".": "./dist/index.js",
+		"./*": "./dist/*"
+	},
+	"bin": {
+		"xrr": "./scripts/xrr.mjs"
+	},
+	"files": [
+		"dist",
+		"scripts",
+		"src",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc -b",
+		"watch": "tsc -b -w",
+		"test": "node test/format.test.mjs"
+	},
+	"peerDependencies": {
+		"xxscreeps": ">=0.1.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"typescript": "^5.9.0"
+	}
+}

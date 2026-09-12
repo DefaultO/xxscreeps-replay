@@ -1,0 +1,28 @@
+{
+	"compilerOptions": {
+		"composite": true,
+		"rootDir": "src",
+		"outDir": "dist",
+
+		// Match the settings xxscreeps itself compiles with, so its .d.ts files
+		// typecheck cleanly from mod code
+		"target": "es2022",
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"verbatimModuleSyntax": true,
+		"experimentalDecorators": true,
+		"lib": [ "esnext" ],
+		"types": [ "node" ],
+
+		"declaration": true,
+		"sourceMap": true,
+
+		"strict": true,
+		"exactOptionalPropertyTypes": true,
+		"noImplicitOverride": true,
+		"noUncheckedIndexedAccess": true,
+		"isolatedModules": true,
+		"skipLibCheck": true
+	},
+	"include": [ "src" ]
+}

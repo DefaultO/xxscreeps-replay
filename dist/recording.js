@@ -12,8 +12,22 @@ const codecNames = Object.keys(CODECS);
 const MAGIC = [0x58, 0x52, 0x52, 0x43]; // XRRC
 const RECORD_VERSION = 1;
 export const RECORD_HEADER = 28;
+// zstd arrived in Node 22.15 / 23.8; older runtimes get brotli instead.
+export const hasZstd = typeof zlib.zstdCompressSync === 'function';
+let warnedZstd = false;
+/** The codec actually used for `codec` on this runtime. */
+export function effectiveCodec(codec) {
+    if (codec === 'zstd' && !hasZstd) {
+        if (!warnedZstd) {
+            warnedZstd = true;
+            console.warn(`replay: this Node (${process.version}) has no zstd; recording with brotli instead`);
+        }
+        return 'brotli';
+    }
+    return codec;
+}
 export function compress(raw, codec, level) {
-    switch (codec) {
+    switch (effectiveCodec(codec)) {
         case 'none': return raw;
         case 'zstd': return zlib.zstdCompressSync(raw, {
             params: { [zlib.constants.ZSTD_c_compressionLevel]: level ?? 19 },
@@ -31,18 +45,23 @@ export function compress(raw, codec, level) {
 export function decompress(data, codec) {
     switch (codecNames[codec]) {
         case 'none': return data;
-        case 'zstd': return zlib.zstdDecompressSync(data);
+        case 'zstd':
+            if (!hasZstd) {
+                throw new Error(`This recording is zstd-compressed and Node ${process.version} cannot read it; use Node 22.15 or newer`);
+            }
+            return zlib.zstdDecompressSync(data);
         case 'brotli': return zlib.brotliDecompressSync(data);
         default: throw new Error(`Unknown codec id ${codec}`);
     }
 }
 export function encodeRecord(raw, codec, firstTick, lastTick, frames, level) {
-    const payload = compress(raw, codec, level);
+    const used = effectiveCodec(codec);
+    const payload = compress(raw, used, level);
     const record = new Uint8Array(RECORD_HEADER + payload.length);
     const view = new DataView(record.buffer);
     record.set(MAGIC, 0);
     record[4] = RECORD_VERSION;
-    record[5] = CODECS[codec];
+    record[5] = CODECS[used];
     view.setUint16(6, 0, true);
     view.setUint32(8, firstTick, true);
     view.setUint32(12, lastTick, true);

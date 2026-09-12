@@ -15,8 +15,9 @@ I wrote it to look at bot speedruns on a private server. A full run to RCL5
 
 ## Requirements
 
-- An [xxscreeps](https://github.com/laverdet/xxscreeps) server running on
-  Node 24 or newer (the codec uses Node's zstd).
+- An [xxscreeps](https://github.com/laverdet/xxscreeps) server. Node 22.15 or
+  newer records with zstd; older Node falls back to brotli (about 6% larger
+  files) and cannot read zstd recordings made elsewhere.
 - [`@xxscreeps/client`](https://github.com/laverdet/xxscreeps/tree/main/packages/client),
   the mod that serves the official browser client from your Steam install of
   Screeps. All playback happens in that client, so without it there is nothing

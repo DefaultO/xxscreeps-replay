@@ -67,6 +67,9 @@ export interface ChunkRecord {
     length: number;
 }
 export declare const RECORD_HEADER = 28;
+export declare const hasZstd: boolean;
+/** The codec actually used for `codec` on this runtime. */
+export declare function effectiveCodec(codec: Codec): Codec;
 export declare function compress(raw: Uint8Array, codec: Codec, level?: number): Uint8Array;
 export declare function decompress(data: Uint8Array, codec: number): Uint8Array;
 export declare function encodeRecord(raw: Uint8Array, codec: Codec, firstTick: number, lastTick: number, frames: number, level?: number): Uint8Array;

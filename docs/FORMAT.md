@@ -16,133 +16,434 @@ file:
 
 ## Records
 
-A room file is a sequence of records with no file header. Each record is a
-28-byte header followed by one compressed chunk:
+A room file (`<room>.xrr`) has no header of its own. It is a sequence of
+records, each one a compressed chunk behind a 28-byte header, and it only
+ever grows: the recorder appends a record every `chunkTicks` ticks and
+never rewrites what is there. A reader finds the records by reading a
+header, skipping the payload it describes, and repeating.
 
-| offset | size | |
-|---|---|---|
-| 0 | 4 | magic `XRRC` |
-| 4 | 1 | record version, 1 |
-| 5 | 1 | codec: 0 none, 1 zstd, 2 brotli |
-| 6 | 2 | reserved, 0 |
-| 8 | 4 | first tick in the chunk |
-| 12 | 4 | last tick in the chunk |
-| 16 | 4 | number of frames |
-| 20 | 4 | chunk length before compression |
-| 24 | 4 | payload length |
-| 28 | payload length | the chunk, compressed with the codec |
+| offset | size | field | |
+|---|---|---|---|
+| 0 | 4 | magic | the ASCII bytes `XRRC` |
+| 4 | 1 | record version | 1 |
+| 5 | 1 | codec | 0 none, 1 zstd, 2 brotli |
+| 6 | 2 | reserved | 0 |
+| 8 | 4 | first tick | of the chunk inside |
+| 12 | 4 | last tick | |
+| 16 | 4 | frames | how many ticks the chunk holds |
+| 20 | 4 | raw length | the chunk's size before compression |
+| 24 | 4 | payload length | the chunk's size after compression |
+| 28 | payload length | payload | the chunk, compressed with the codec |
 
-A reader indexes a file by reading headers and skipping payloads. A record
-whose payload runs past the end of the file is a write that did not finish;
-readers ignore it.
+All integers are little-endian. The next record starts at
+`28 + payload length`.
 
-Records of one room are in tick order and never overlap. A chunk covers
-ticks within one aligned span of `chunkTicks` (from `meta.json`; 200 by
-default): chunk n holds ticks `[n * chunkTicks, (n + 1) * chunkTicks)`. A
-span may hold more than one record when the recorder closed a chunk early
-(a flush before a shutdown); every record starts with a keyframe, so they
-simply concatenate.
+The first record of `W7N3.xrr` in the recording the README shows:
+
+```
+58 52 52 43   magic XRRC
+01            version 1
+01            codec 1 = zstd
+00 00         reserved
+02 00 00 00   first tick 2
+c7 00 00 00   last tick 199
+c6 00 00 00   198 frames
+e0 0b 00 00   3040 bytes before compression
+08 04 00 00   1032 bytes of payload
+```
+
+So this record spans bytes 0 to 1059 and the next header is at 1060;
+reading it gives ticks 200 to 399, 200 frames, 5332 raw bytes in 2082. The
+first record has 198 frames rather than 200 because the room was picked
+up at tick 2, when its spawn landed; chunks are aligned to absolute ticks,
+not to when recording started.
+
+The header repeats what the chunk knows about itself (ticks, frames) so a
+reader can index a whole file, build a timeline and find the chunk for a
+tick without decompressing anything. That is what the viewers do on every
+request.
+
+**Alignment.** Chunk `n` holds ticks `[n * chunkTicks, (n + 1) * chunkTicks)`
+and nothing else; `chunkTicks` is in `meta.json` and is 200 unless
+configured. Records are in tick order and never overlap. One span can hold
+two records: when the recorder is asked to flush (before a shutdown) it
+closes the open chunk early, and the ticks that follow in the same span
+start a new chunk. Both records begin with a keyframe, so a reader
+concatenates their frames and carries on. A tick with no frame in any
+record was not recorded.
+
+**A truncated tail.** If the recorder died while writing, the last header
+describes a payload the file does not fully contain. `indexRecords` stops
+there and ignores that record; everything before it is intact, because
+each record is written in one `write` call after the chunk is complete in
+memory.
 
 ## Chunks
 
-A chunk is self-contained: it starts with every object of the room and
-carries what a reader needs to decode it.
+A chunk is `frames` consecutive recorded ticks of one room, starting with
+the whole room and continuing with what changed. Everything a reader needs
+is inside it: the key and string tables come first, so a chunk can be
+decoded on its own, without the ones before it.
+
+### Numbers and strings
+
+Three primitives make up everything below.
+
+A **varint** is an unsigned integer in LEB128: seven bits a byte, low bits
+first, the high bit set on every byte except the last.
+
+```
+100    → 64
+200    → c8 01        (200 = 0b1_1001000: low 7 bits 1001000 = 0x48, with continuation 0xc8; then 1)
+300    → ac 02
+6000   → f0 2e
+```
+
+A **zigzag** varint carries a signed integer by folding the sign into the
+low bit: `v >= 0 ? 2v : -2v - 1`, then varint. Small magnitudes stay small
+either way.
+
+```
+ 0 → 0 → 00
+ 1 → 2 → 02
+-1 → 1 → 01
+-10 → 19 → 13
+ 50 → 100 → 64
+ 3000 → 6000 → f0 2e
+```
+
+A **string** is a varint byte length followed by that many bytes of
+UTF-8: `"x"` is `01 78`, `"store.energy"` is `0c` and twelve bytes.
+
+### The header
 
 ```
 varint  format version, 1
 varint  first tick
 varint  last tick
 varint  frame count
-varint  key count,    then that many strings: the field paths used
-varint  string count, then that many strings: the string values used
-frames
+varint  key count, then that many strings
+varint  string count, then that many strings
+frames, one after another
 ```
 
-Every object is flattened to `path -> value` pairs before encoding. Nested
-objects become dotted paths (`store.energy`, `actionLog.harvest.x`); arrays
-(`body`) stay whole as one value. An empty nested object is kept as an empty
-value so it round-trips. The object's `_id` is the key it is stored under
-and is not a field.
+The **key table** lists every field path used anywhere in the chunk;
+entries refer to fields by their index in it. The **string table** lists
+every string value; values refer to strings by index. Both are written
+last by the encoder and read first by the decoder: the encoder buffers the
+frames while it collects keys and strings, then writes the tables ahead of
+them. A creep's `x` changes thousands of times in a chunk and costs one
+byte each time because the path `"x"` is written once.
+
+### Objects and fields
+
+Before encoding, every object is flattened to a list of `path → value`
+pairs. Nested objects become dotted paths: `{store: {energy: 50}}` is one
+field `store.energy = 50`. An object that is nested but empty (`store: {}`
+on an empty creep) is kept as one field `store` with the empty-object
+value, so the client gets its `store` back. Arrays are not flattened: a
+creep's `body` is one field whose value is the whole array. The object's
+`_id` is the key it is stored under in the frame, not a field.
+
+Within a chunk, objects are numbered in the order they first appear,
+starting at 0. A removed object keeps its number; it is not reused. Frames
+refer to objects by number, and numbers in a frame are written as
+ascending deltas, so a frame that touches objects 0, 1 and 7 writes
+`0, 1, 6`.
 
 ### Frames
 
 ```
-varint  tick delta: 0 for the first frame, else ticks since the previous frame
-varint  removed count, then that many object indexes as ascending deltas
-varint  added count, then that many objects:
+varint  tick delta         0 for the first frame, else ticks since the previous frame
+varint  removed count      then that many object numbers, as ascending deltas
+varint  added count        then that many new objects:
           string  id
           varint  field count
-          entries (all absolute)
-varint  changed count, then that many objects:
-          varint  object index as a delta from the previous changed index
+          entries            every one absolute (kind 1)
+varint  changed count      then that many known objects:
+          varint  object number, as a delta from the previous changed object
           varint  entry count
           entries
 ```
 
-Objects are numbered in order of first appearance within the chunk,
-starting at 0; a removed object's number is not reused. Ticks with no frame
-were not recorded.
+The first frame of a chunk is the keyframe: it has no removals or changes,
+and every object of the room appears under "added". Ticks between two
+frames' ticks were not recorded; the tick delta says how many.
 
-An entry is `varint code` where `code = key * 4 + kind`, `key` indexing the
-key table:
+### Entries
+
+An entry is one field of one object. It starts with a varint **code**:
+
+```
+code = key * 4 + kind
+```
+
+`key` indexes the key table; `kind` says what follows:
 
 | kind | | followed by |
 |---|---|---|
-| 0 | residual | zigzag varint, added to the predicted value |
-| 1 | absolute | a value (below) |
-| 2 | removed | nothing; the field is gone |
+| 0 | residual | a zigzag varint: the actual value minus the predicted one (below) |
+| 1 | absolute | a value (below): the field is set to this |
+| 2 | removed | nothing: the field no longer exists |
+
+So `x` as key 1 gives codes 4 (residual), 5 (absolute), 6 (removed);
+`energy` as key 5 gives 20, 21, 22.
 
 ### Values
 
-One tag byte, then:
+An absolute value is one tag byte and then what the tag says:
 
-| tag | | |
+| tag | | then |
 |---|---|---|
 | 0 | null | |
 | 1 | false | |
 | 2 | true | |
 | 3 | integer | zigzag varint |
-| 4 | float | 8 bytes, IEEE 754 double |
+| 4 | float | 8 bytes, IEEE 754 double, little-endian |
 | 5 | string | varint index into the string table |
 | 6 | empty object | |
 | 7 | array | varint length, then that many values |
-| 8 | object | varint count, then that many (varint key string index, value) pairs |
+| 8 | object | varint pair count, then pairs of (varint key string index, value) |
+
+Integers are numbers with no fractional part and magnitude at most 2^48;
+anything else numeric is a float. Objects and arrays nest: a creep's body
+is tag 7, a length, then one tag-8 object per part with keys `type` and
+`hits`, both taken from the string table.
+
+### A chunk, byte by byte
+
+A room with a creep and a source, recorded for five ticks. The creep walks
+east one tile a tick and gets 50 energy on the third tick; the source is
+harvested for 10 a tick; on the last tick the creep is gone. Built with
+the encoder and read back with the decoder, 131 bytes in all:
+
+```
+off  bytes                 meaning
+  0  01                    format version 1
+  1  64                    first tick 100
+  2  68                    last tick 104
+  3  05                    5 frames
+  4  06                    6 keys
+  5  04 74 79 70 65        key 0 "type"
+ 10  01 78                 key 1 "x"
+ 12  01 79                 key 2 "y"
+ 14  0c 73 74 6f 72 65 2e 65 6e 65 72 67 79
+                           key 3 "store.energy"
+ 27  04 6e 61 6d 65        key 4 "name"
+ 32  06 65 6e 65 72 67 79  key 5 "energy"
+ 39  03                    3 strings
+ 40  05 63 72 65 65 70     string 0 "creep"
+ 46  02 77 31              string 1 "w1"
+ 49  06 73 6f 75 72 63 65  string 2 "source"
+
+     frame 0, tick 100: the keyframe
+ 56  00                    tick delta 0
+ 57  00                    0 removed
+ 58  02                    2 added
+ 59  02 61 31              id "a1"                       → object 0
+ 62  05                    5 fields
+ 63  01 05 00              code 1 = key 0 type, absolute: tag 5 string 0 "creep"
+ 66  05 03 14              code 5 = key 1 x, absolute: tag 3 zigzag 20 → 10
+ 69  09 03 28              code 9 = key 2 y, absolute: 20
+ 72  0d 03 00              code 13 = key 3 store.energy, absolute: 0
+ 75  11 05 01              code 17 = key 4 name, absolute: string 1 "w1"
+ 78  02 62 32              id "b2"                       → object 1
+ 81  04                    4 fields
+ 82  01 05 02              type = "source"
+ 85  05 03 0a              x = 5
+ 88  09 03 0a              y = 5
+ 91  15 03 f0 2e           code 21 = key 5 energy, absolute: zigzag 6000 → 3000
+ 95  00                    0 changed
+
+     frame 1, tick 101: x is 11, energy 2990; nothing has a trend yet
+ 96  01                    tick delta 1
+ 97  00                    0 removed
+ 98  00                    0 added
+ 99  02                    2 changed
+100  00                    object 0 (delta 0)
+101  01                    1 entry
+102  04 02                 code 4 = key 1 x, residual: zigzag 2 → +1
+104  01                    object 1 (delta 1)
+105  01                    1 entry
+106  14 13                 code 20 = key 5 energy, residual: zigzag 19 → -10
+
+     frame 2, tick 102: x is 12, store.energy 50, energy 2980
+108  01 00 00 02           tick delta 1, 0 removed, 0 added, 2 changed
+112  00 02                 object 0, 2 entries
+114  04 02                 x residual +1        (second equal delta: the trend is now confirmed)
+116  0c 64                 store.energy residual: zigzag 100 → +50
+118  01 01                 object 1, 1 entry
+120  14 13                 energy residual -10  (likewise)
+
+     frame 3, tick 103: x is 13, energy 2970, store.energy still 50
+122  01 00 00 00           tick delta 1, nothing removed, added or changed
+
+     frame 4, tick 104: the creep is gone
+126  01                    tick delta 1
+127  01                    1 removed
+128  00                    object 0
+129  00 00                 0 added, 0 changed
+```
+
+Frame 3 is the point of the format: both the walk and the harvest are
+predicted exactly, `store.energy` stays where it was put, and a tick with
+two objects costs four bytes. The keyframe is 40 bytes for two objects;
+the tables, which every later frame draws on, are 52.
 
 ### Prediction
 
-For every integer field of every object the decoder keeps the value and
-the last two deltas, `d1` (most recent) and `d2`. Before a frame's entries
-apply, the field's predicted value is `value + d1` if `d1 == d2`, else
-`value`. A field with no entry in a frame takes its prediction; a residual
-entry adds to it; an absolute entry replaces the value and forgets both
-deltas. After either, `d2 = d1` and `d1 = new - old`.
+For every integer field of every object the decoder keeps three numbers:
+the current value, the last delta `d1`, and the delta before it `d2`. Both
+deltas start as "none".
+
+Before a frame's entries are applied, every integer field gets a
+**predicted** value:
+
+```
+predicted = (d1 == d2 and both known) ? value + d1 : value
+```
+
+That is: if the field moved by the same amount in the last two frames, it
+is expected to move by that amount again; otherwise it is expected to stay.
+
+Then the entries apply, and every integer field is updated, whether or
+not it had an entry:
+
+- no entry: `new = predicted`
+- residual `r`: `new = predicted + r`
+- absolute `v`: `new = v`, and both deltas are forgotten (set to "none")
+
+and after that, for the no-entry and residual cases:
+`d2 = d1`, `d1 = new - old`.
+
+The encoder keeps the same three numbers, computes the same prediction,
+and writes a residual entry only when the actual value differs from it.
+Since both sides update identically, the decoder ends every frame with
+exactly the encoder's state. The rule that a field without an entry
+follows its prediction is what makes a frame with no entries meaningful:
+it says "everything moved as expected".
+
+How the three common shapes of change cost:
+
+A creep walking east, `x` over six ticks:
+
+| tick | x | d1, d2 before | predicted | entry |
+|---|---|---|---|---|
+| 0 | 10 | none, none | keyframe | absolute 10 |
+| 1 | 11 | none, none | 10 | residual +1 |
+| 2 | 12 | 1, none | 11 | residual +1 |
+| 3 | 13 | 1, 1 | 13 | none |
+| 4 | 14 | 1, 1 | 14 | none |
+| 5 | 14 | 1, 1 | 15 | residual -1 (it stopped) |
+| 6 | 14 | 0, 1 | 14 | none |
+
+Two entries to establish a trend, one to break it, nothing in between. A
+countdown (`ticksToLive`, a decaying structure's timer) is the same table
+with -1, and costs nothing for the whole life of the creep once two ticks
+are in. A source under a steady harvest (`energy` 3000, 2990, 2980, ...)
+likewise: two entries, then free until the harvester leaves or the source
+regenerates, each of which is one residual.
+
+A one-off change, a creep receiving 50 energy once:
+
+| tick | store.energy | d1, d2 before | predicted | entry |
+|---|---|---|---|---|
+| 1 | 0 | none, none | 0 | none |
+| 2 | 50 | 0, none | 0 | residual +50 |
+| 3 | 50 | 50, 0 | 50 | none |
+| 4 | 50 | 0, 50 | 50 | none |
+
+One entry. The deltas 50 and 0 never agree, so no false trend appears;
+the field is predicted to hold, which it does.
+
+Why the decoder must touch every integer field every frame even when the
+frame has no entries: a field in a trend keeps moving on its own, and a
+decoder that only applied entries would leave a walking creep standing
+still. The cost is a loop over all fields per frame, which for a room of a
+hundred objects is a few thousand additions.
 
 Non-integer fields (strings, booleans, floats, arrays, objects) have no
-prediction: they change only through absolute entries. Integers are values
-with no fractional part and magnitude at most 2^48.
+prediction. They are written as absolute entries when they change and are
+left alone otherwise. An integer field that becomes something else, or the
+reverse, goes through an absolute entry, which resets the deltas.
 
-The encoder does the same bookkeeping and writes an entry only where the
-actual value differs from the prediction. That is the whole trick: a TTL
-counting down, a source being harvested at a fixed rate, a creep walking in
-a straight line, a constant field, all cost nothing after the second frame.
+### Reading a chunk
+
+```
+read the header and both tables
+state = empty map of object number → (id, fields)
+for each frame:
+    tick += delta (or tick = first tick)
+    remove the listed objects
+    for each added object: number it, read its fields as absolute values
+    for each changed object: apply its entries, remembering which fields were touched
+    for every integer field of every object not touched in this frame:
+        value = predicted; d2 = d1; d1 = delta just applied
+    emit (tick, state) - unflatten each object's fields, put `_id` back
+```
+
+`ChunkDecoder` in `format.ts` is that loop; `historyTicks` turns its frames
+into the client's 100-tick chunk shape, diffing consecutive states.
 
 ## Bundles
 
-A bundle is the entries of a recording directory in one file. Nothing is
-compressed again: the room entries are the room files byte for byte.
+A bundle is a recording directory in one file, for sharing. It is a
+container and nothing else: the entries are the directory's files byte for
+byte, in a fixed order, each behind a small header. The room entries are
+already compressed record by record, so the bundle applies no compression
+of its own and gains nothing from being zipped.
 
 ```
-4 bytes  magic XRRB
-1 byte   bundle version, 1
+4 bytes   magic, the ASCII bytes XRRB
+1 byte    bundle version, 1
 entries, each:
   1 byte   name length
-  name     UTF-8
-  8 bytes  entry length (unsigned 64-bit)
-  bytes
+  bytes    name, UTF-8
+  8 bytes  entry length, unsigned 64-bit little-endian
+  bytes    the entry
 ```
 
-`meta.json` comes first, then `terrain.bin`, then the rooms. A reader finds
-entries by walking the headers.
+The first 40 bytes of the bundle made from the README's recording:
+
+```
+58 52 52 42            magic XRRB
+01                     version 1
+09                     name length 9
+6d 65 74 61 2e 6a 73 6f 6e
+                       "meta.json"
+17 66 00 00 00 00 00 00
+                       length 0x6617 = 26,135 bytes
+7b 0a 09 22 76 65 72 73 69 6f 6e 22 3a 20 31 2c 0a ...
+                       the entry: {\n\t"version": 1,\n ...
+```
+
+After 26,135 bytes of JSON comes the next name length, `0b`, then
+`terrain.bin`, its length (360,000), the file, and so on for every room.
+
+Entries are in the order `meta.json`, `terrain.bin` (if the recording has
+one), then the rooms in the order `meta.json` lists them. A reader should
+not depend on the order beyond the first: it walks the headers, records
+where each entry starts and how long it is, and looks entries up by name.
+There is no index at the end because a walk over a few dozen headers is
+instant and an end-of-file index would break the one property worth
+keeping, that a bundle can be produced by streaming a directory once.
+
+**Reading a room from a bundle.** The entry `W7N3.xrr` starts at some
+offset `o` and is `n` bytes long. Those `n` bytes are a room file exactly
+as described under Records, so the record walk runs from `o` to `o + n`
+instead of from 0 to the end of the file, and the record offsets it yields
+are absolute positions in the bundle. Nothing else changes; `Recording`
+opens a directory and a bundle the same way and the viewers do not know
+which they have.
+
+Names are ASCII letters, digits, `_`, `-` and `.`; a reader ignores an
+entry with any other name, so a bundle cannot make an unpacker write
+outside its directory. An entry length is 64-bit so a room file of any
+size fits, though a real one is a few megabytes.
+
+A bundle is read-only. To change a recording, unpack it; to share one
+again, pack it. `packRecording` and `unpackRecording` in `recording.ts`
+are short: a header, then the files copied through in order.
 
 ## terrain.bin
 

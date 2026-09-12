@@ -114,8 +114,11 @@ function measure(recording) {
 			{ name: 'room socket JSON, every tick', bytes: fullJson },
 			{ name: 'room-history JSON (screeps.com API)', bytes: historyJson },
 			{ name: 'room-history JSON, gzipped (served, archived)', bytes: historyGzip },
-			{ name: `.xrr (${meta.codec})`, bytes: storedBytes },
+			// The file as the default codec writes it, whatever this recording
+			// was made with, so the two charts describe the same thing
+			{ name: `.xrr, ${codecs[0].codec} ${codecs[0].level}`, bytes: codecTotals[0].bytes },
 		].map(entry => ({ ...entry, bytesPerFrame: perTick(entry.bytes) })),
+		storedBytes,
 		windows,
 	};
 }

@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="836" height="192" viewBox="0 0 836 192" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#8b949e">
 <text x="317" y="24" font-size="14" font-weight="600">Bytes per room-tick by format, defaulto-rcl5 (log scale)</text>
 <text x="305" y="65" text-anchor="end">room socket JSON, every tick</text><rect x="317" y="52" width="360.0" height="18" fill="#8b949e" rx="1"/><text x="685.0" y="65">10 KB, 889.0 MB total</text>
-<text x="305" y="99" text-anchor="end">room-history JSON (screeps.com API)</text><rect x="317" y="86" width="236.2" height="18" fill="#8b949e" rx="1"/><text x="561.2" y="99">959 B, 81.2 MB total</text>
-<text x="305" y="133" text-anchor="end">room-history JSON, gzipped (served, archived)</text><rect x="317" y="120" width="112.4" height="18" fill="#8b949e" rx="1"/><text x="437.4" y="133">87 B, 7.4 MB total</text>
-<text x="305" y="167" text-anchor="end">.xrr (zstd)</text><rect x="317" y="154" width="56.8" height="18" fill="#1f9d8c" rx="1"/><text x="381.8" y="167">30 B, 2.5 MB total</text>
+<text x="305" y="99" text-anchor="end">room-history JSON (screeps.com API)</text><rect x="317" y="86" width="236.1" height="18" fill="#8b949e" rx="1"/><text x="561.1" y="99">959 B, 81.2 MB total</text>
+<text x="305" y="133" text-anchor="end">room-history JSON, gzipped (served, archived)</text><rect x="317" y="120" width="112.1" height="18" fill="#8b949e" rx="1"/><text x="437.1" y="133">87 B, 7.4 MB total</text>
+<text x="305" y="167" text-anchor="end">.xrr, brotli 5</text><rect x="317" y="154" width="56.9" height="18" fill="#1f9d8c" rx="1"/><text x="381.9" y="167">30 B, 2.5 MB total</text>
 </svg>

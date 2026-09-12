@@ -59,10 +59,11 @@
 			"bytesPerFrame": 87.40486088147763
 		},
 		{
-			"name": ".xrr (zstd)",
-			"bytes": 2524568,
-			"bytesPerFrame": 29.814445651660446
+			"name": ".xrr, brotli 5",
+			"bytes": 2545210,
+			"bytesPerFrame": 30.05822192829137
 		}
 	],
-	"windows": 896
+	"windows": 896,
+	"storedBytes": 2506928
 }

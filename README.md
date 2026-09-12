@@ -246,12 +246,17 @@ travel and get archived, and as `.xrr`:
 | room socket JSON, every tick | 889 MB | 10.5 KB |
 | room-history JSON (screeps.com API) | 81 MB | 959 B |
 | room-history JSON, gzipped | 7.4 MB | 87 B |
-| `.xrr` | 2.5 MB | 30 B |
+| `.xrr`, brotli 5 | 2.55 MB | 30 B |
 
 So the binary format is about 3x smaller than gzipped history JSON, and
 that is the fair comparison, since gzip is what the archive would store.
-The 10 MB of chunk data before compression already sit 8x under the gzipped
-JSON; the prediction does most of the work, the codec the rest.
+Two steps get there: the prediction codec turns 959 bytes of history JSON
+per room-tick into 123 bytes of chunk data (that is the `none` row of the
+next chart), and the general-purpose codec takes those to 30.
+
+Compression is applied once per chunk of 200 ticks, never per tick. The
+per-tick figures everywhere here are a chunk's bytes divided by the ticks
+it holds; there is no separate per-tick codec to choose.
 
 **Codec choice.** The same chunks under each codec, with the total time to
 encode and decode all of them on this machine:

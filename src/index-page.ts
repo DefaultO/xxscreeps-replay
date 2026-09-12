@@ -6,11 +6,11 @@
 // world map puts on owned rooms. Values were read off the running client.
 
 import type { Recording, RecordingMeta } from './recording.js';
-import { parseRoomName } from './viewer.js';
+import { parseRoomName } from './terrain.js';
 
 export function historyUrl(recording: Recording, room: string, tick: number) {
 	const { meta } = recording;
-	return `/replay/${encodeURIComponent(meta.name)}/#!/history/${meta.shard}/${room}?t=${tick}&code=${encodeURIComponent(`${meta.name}~${room}`)}`;
+	return `/replay/${encodeURIComponent(recording.name)}/#!/history/${meta.shard}/${room}?t=${tick}&code=${encodeURIComponent(`${recording.name}~${room}`)}`;
 }
 
 export interface IndexOptions {
@@ -127,7 +127,7 @@ export function indexPage(recordings: Recording[], options: IndexOptions): strin
 		}
 		const cols = placed.length ? maxX - minX + 1 : 0;
 		const rowsCount = placed.length ? maxY - minY + 1 : 0;
-		terrain[meta.name] = {};
+		terrain[recording.name] = {};
 		const tiles: string[] = [];
 		for (let y = 0; y < rowsCount; ++y) {
 			for (let x = 0; x < cols; ++x) {
@@ -136,13 +136,14 @@ export function indexPage(recordings: Recording[], options: IndexOptions): strin
 					tiles.push('<span class="tile empty"></span>');
 					continue;
 				}
-				if (entry.info.terrain) {
-					terrain[meta.name]![entry.room] = entry.info.terrain;
+				const roomTerrain = recording.terrain(entry.room);
+				if (roomTerrain) {
+					terrain[recording.name]![entry.room] = roomTerrain;
 				}
 				const controller = entry.info.controller;
 				const owned = !!controller?.user && !!meta.users[controller.user];
 				tiles.push(`<a class="tile${owned ? ' owned' : ''}" href="${historyUrl(recording, entry.room, entry.info.firstTick)}" title="${entry.room}: ticks ${num(entry.info.firstTick)}–${num(entry.info.lastTick)}">` +
-					`<canvas width="50" height="50" data-rec="${escape(meta.name)}" data-room="${entry.room}"></canvas>` +
+					`<canvas width="50" height="50" data-rec="${escape(recording.name)}" data-room="${entry.room}"></canvas>` +
 					`<span class="rn">${entry.room}</span>` +
 					(owned && controller!.level > 0 ? `<span class="lvl">${controller!.level}</span>` : '') +
 					'</a>');
@@ -161,13 +162,13 @@ export function indexPage(recordings: Recording[], options: IndexOptions): strin
 
 		const player = players.length
 			? players.map(([ id, user ]) =>
-				`<span class="player"><img src="/replay/${encodeURIComponent(meta.name)}/api/user/badge-svg?username=${encodeURIComponent(user.username)}" alt="">` +
+				`<span class="player"><img src="/replay/${encodeURIComponent(recording.name)}/api/user/badge-svg?username=${encodeURIComponent(user.username)}" alt="">` +
 				`<a class="user" href="${historyUrl(recording, mainRoom(meta, id), meta.rooms[mainRoom(meta, id)]?.firstTick ?? meta.firstTick)}">${escape(user.username)}</a></span>`).join('')
 			: '<span class="player">no players</span>';
 
 		const home = mainRoom(meta);
 		const actions = [
-			options.viewer ? `<a class="btn" href="/replay/${encodeURIComponent(meta.name)}/map/">World map</a>` : '',
+			options.viewer ? `<a class="btn" href="/replay/${encodeURIComponent(recording.name)}/map/">World map</a>` : '',
 			home ? `<a class="btn alt" href="${historyUrl(recording, home, meta.rooms[home]!.firstTick)}">Room ${home}</a>` : '',
 		].join('');
 
@@ -177,7 +178,7 @@ export function indexPage(recordings: Recording[], options: IndexOptions): strin
 			.join('');
 
 		return `<section class="block">
-<div class="block-header"><span class="name">${escape(meta.name)}</span><span>${escape(meta.shard)}</span>${live ? '<span class="live">recording</span>' : ''}<span class="when">${when(meta)}</span></div>
+<div class="block-header"><span class="name">${escape(recording.name)}</span><span>${escape(meta.shard)}</span>${live ? '<span class="live">recording</span>' : ''}<span class="when">${when(meta)}</span></div>
 <div class="block-body">
 ${map}
 <div class="info">

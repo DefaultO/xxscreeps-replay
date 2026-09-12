@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="750" height="226" viewBox="0 0 750 226" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#8b949e">
+<text x="139" y="24" font-size="14" font-weight="600">Bytes per room-tick by codec, defaulto-rcl5 (84,676 room-ticks)</text>
+<text x="127" y="65" text-anchor="end">brotli 5 (default)</text><rect x="139" y="52" width="88.3" height="18" fill="#1f9d8c" rx="1"/><text x="235.3" y="65">30.1 B, encode 564 ms, decode 58 ms</text>
+<text x="127" y="99" text-anchor="end">brotli 11</text><rect x="139" y="86" width="80.7" height="18" fill="#8b949e" rx="1"/><text x="227.7" y="99">27.5 B, encode 19.7 s, decode 71 ms</text>
+<text x="127" y="133" text-anchor="end">zstd 19</text><rect x="139" y="120" width="87.1" height="18" fill="#8b949e" rx="1"/><text x="234.1" y="133">29.7 B, encode 5.3 s, decode 52 ms</text>
+<text x="127" y="167" text-anchor="end">zstd 3</text><rect x="139" y="154" width="95.4" height="18" fill="#8b949e" rx="1"/><text x="242.4" y="167">32.5 B, encode 97 ms, decode 30 ms</text>
+<text x="127" y="201" text-anchor="end">none</text><rect x="139" y="188" width="360.0" height="18" fill="#8b949e" rx="1"/><text x="507.0" y="201">122.6 B, encode 0 ms, decode 0 ms</text>
+</svg>

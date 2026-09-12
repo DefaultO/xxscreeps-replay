@@ -53,15 +53,16 @@ let recorder: Recorder | undefined;
 const opened = new Map<string, Recording>();
 
 function openRecording(name: string): Recording | undefined {
-	if (recorder && recorder.recording.meta.name === name) {
+	if (recorder && recorder.recording.name === name) {
 		return recorder.recording;
 	}
 	let recording = opened.get(name);
 	if (recording === undefined) {
-		if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+		if (!/^[A-Za-z0-9_.-]+$/.test(name) || name.endsWith('.xrr')) {
 			return undefined;
 		}
-		recording = Recording.open(`${config.dir}/${name}`);
+		// A directory, or a single-file bundle of the same name
+		recording = Recording.open(`${config.dir}/${name}`) ?? Recording.open(`${config.dir}/${name}.xrr`);
 		if (recording) {
 			opened.set(name, recording);
 			while (opened.size > 4) {
@@ -195,7 +196,7 @@ hooks.register('middleware', koa => {
 						room: code.room,
 						minTime: room.firstTick,
 						maxTime: room.lastTick,
-						terrain: room.terrain,
+						terrain: recording.terrain(code.room),
 					};
 				} else {
 					const chunk = historyRoute(recording, code.room, Number(replayCode.groups!.base));
@@ -244,9 +245,9 @@ hooks.register('middleware', koa => {
 				context.body = { ok: 1, time: recording.meta.lastTick + 50 + config.historyChunkSize };
 				return;
 			} else if (rest === '/api/game/room-terrain' && typeof context.query.room === 'string') {
-				const room = recording.meta.rooms[context.query.room];
-				if (room?.terrain) {
-					context.body = { ok: 1, terrain: [ { _id: context.query.room, room: context.query.room, terrain: room.terrain, type: 'terrain' } ] };
+				const terrain = recording.meta.rooms[context.query.room] ? recording.terrain(context.query.room) : undefined;
+				if (terrain) {
+					context.body = { ok: 1, terrain: [ { _id: context.query.room, room: context.query.room, terrain, type: 'terrain' } ] };
 					return;
 				}
 				context.path = rest;

@@ -41,7 +41,7 @@ export function replayConfig(): ReplayConfig {
 		name: env.XX_REPLAY_NAME ?? raw.name,
 		chunkTicks,
 		historyChunkSize,
-		codec: raw.codec ?? 'zstd',
+		codec: raw.codec ?? 'brotli',
 		level: raw.level,
 		rooms: raw.rooms,
 		users: raw.users,

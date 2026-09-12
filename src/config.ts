@@ -11,8 +11,8 @@
 //     name: run-42           # recording name (default: the start time)
 //     chunkTicks: 200        # ticks per stored chunk; keyframe every chunk
 //     historyChunkSize: 100  # ticks per room-history request; divides chunkTicks
-//     codec: zstd            # zstd | brotli | none
-//     level: 19              # codec level
+//     codec: brotli          # brotli (default, level 5) | zstd (level 19, Node 22.15+) | none
+//     level: 5               # codec level
 //     rooms: [W7N3]          # fixed room list (default: every room a player is in)
 //     users: [hivemind]      # players (ids or usernames) whose presence picks the rooms
 //                            # (default: every player, the stock NPC bots included)
@@ -52,7 +52,7 @@ export const defaults = {
 		dir: './replays',
 		chunkTicks: 200,
 		historyChunkSize: 100,
-		codec: 'zstd' as Codec,
+		codec: 'brotli' as Codec,
 		log: true,
 	},
 };

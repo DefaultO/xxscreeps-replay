@@ -24,10 +24,9 @@ import { badgeSvgFromFile, customBadgeSvg, isCustomBadge } from './badge.js';
 import type { Frame } from './format.js';
 import { ChunkDecoder, historyTicks } from './format.js';
 import type { Recording, RecordingEvent } from './recording.js';
-import { indexRecords, readRecord } from './recording.js';
+import { BYTES_PER_ROOM, writeTerrainBin } from './terrain.js';
 
 const WINDOW = 100;
-const BYTES_PER_ROOM = 625;
 const INVADER = '2';
 
 const SKETCH_KEYS = [ 'type', 'x', 'y', 'user', 'store', 'storeCapacity', 'storeCapacityResource',
@@ -56,70 +55,6 @@ export interface ViewerContext {
 	body: unknown;
 	set(field: string, value: string): void;
 	redirect(url: string): void;
-}
-
-export function parseRoomName(name: string): { wx: number; wy: number } | undefined {
-	const match = /^([WE])(\d+)([NS])(\d+)$/.exec(name);
-	if (!match) {
-		return undefined;
-	}
-	return {
-		wx: match[1] === 'W' ? -Number(match[2]) - 1 : Number(match[2]),
-		wy: match[3] === 'N' ? -Number(match[4]) - 1 : Number(match[4]),
-	};
-}
-
-/**
- * Writes the world's terrain in the viewer's layout: a square grid of rooms
- * centred on the origin, 2 bits a tile in row-major order. Rooms the world
- * does not have are solid wall.
- */
-export function writeTerrainBin(file: string, world: World, roomNames: Iterable<string>) {
-	const rooms = [ ...roomNames ].map(name => ({ name, pos: parseRoomName(name) })).filter(room => room.pos);
-	let reach = 1;
-	for (const room of rooms) {
-		reach = Math.max(reach, Math.abs(room.pos!.wx) + 1, Math.abs(room.pos!.wy) + 1);
-	}
-	const dim = reach * 2;
-	const tl = -Math.floor(dim / 2);
-	const buffer = Buffer.alloc(dim * dim * BYTES_PER_ROOM, 0x55);
-	for (const room of rooms) {
-		const terrain = world.map.getRoomTerrain(room.name);
-		const offset = ((room.pos!.wy - tl) * dim + (room.pos!.wx - tl)) * BYTES_PER_ROOM;
-		buffer.fill(0, offset, offset + BYTES_PER_ROOM);
-		for (let yy = 0; yy < 50; ++yy) {
-			for (let xx = 0; xx < 50; ++xx) {
-				const tile = yy * 50 + xx;
-				buffer[offset + (tile >> 2)]! |= (terrain.get(xx, yy) & 3) << ((tile & 3) * 2);
-			}
-		}
-	}
-	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, buffer);
-}
-
-/** Terrain for one room from a recording's own copy, 2500 characters of 0/1/2. */
-function terrainBinFromMeta(recording: Recording): Buffer | undefined {
-	const rooms = Object.entries(recording.meta.rooms).filter(([ , info ]) => info.terrain);
-	if (rooms.length === 0) {
-		return undefined;
-	}
-	let reach = 1;
-	const placed = rooms.map(([ name, info ]) => ({ pos: parseRoomName(name), terrain: info.terrain! })).filter(room => room.pos);
-	for (const room of placed) {
-		reach = Math.max(reach, Math.abs(room.pos!.wx) + 1, Math.abs(room.pos!.wy) + 1);
-	}
-	const dim = reach * 2;
-	const tl = -Math.floor(dim / 2);
-	const buffer = Buffer.alloc(dim * dim * BYTES_PER_ROOM, 0x55);
-	for (const room of placed) {
-		const offset = ((room.pos!.wy - tl) * dim + (room.pos!.wx - tl)) * BYTES_PER_ROOM;
-		buffer.fill(0, offset, offset + BYTES_PER_ROOM);
-		for (let tile = 0; tile < 2500; ++tile) {
-			buffer[offset + (tile >> 2)]! |= (Number(room.terrain[tile]) & 3) << ((tile & 3) * 2);
-		}
-	}
-	return buffer;
 }
 
 // --- events: what the timeline shows ----------------------------------------
@@ -204,10 +139,9 @@ function ensureEvents(recording: Recording): Promise<void> | undefined {
 		scan = (async () => {
 			const events: RecordingEvent[] = [];
 			for (const room of recording.rooms()) {
-				const file = recording.roomFile(room);
 				const state: EventScanState = {};
-				for (const record of indexRecords(file)) {
-					for (const frame of ChunkDecoder.all(readRecord(file, record))) {
+				for (const record of recording.index(room)) {
+					for (const frame of ChunkDecoder.all(recording.readChunk(room, record))) {
 						scanFrameEvents(room, frame, state, events);
 					}
 					await new Promise(resolve => setImmediate(resolve));
@@ -219,7 +153,9 @@ function ensureEvents(recording: Recording): Promise<void> | undefined {
 				}
 			}
 			meta.events = events;
-			recording.saveMeta();
+			if (!recording.bundle) {
+				recording.saveMeta();
+			}
 		})().finally(() => scans.delete(recording));
 		scans.set(recording, scan);
 	}
@@ -531,19 +467,12 @@ export async function serveViewer(context: ViewerContext, recording: Recording, 
 		return json(room && base !== undefined ? { room, base } : {});
 	}
 	if (rest === '/terrain.bin' || rest === '/api/terrain') {
-		const file = path.join(recording.dir, 'terrain.bin');
-		let buffer: Buffer | undefined;
-		try {
+		let buffer = recording.terrainBin();
+		if (!buffer && !recording.bundle && options.world && options.roomNames) {
+			// An older directory recording: take the live world's terrain
+			const file = path.join(recording.dir, 'terrain.bin');
+			writeTerrainBin(file, options.world, options.roomNames);
 			buffer = fs.readFileSync(file);
-		} catch {
-			// Older recordings: the live world if it is the same map, else the
-			// rooms the recording itself carries
-			if (options.world && options.roomNames) {
-				writeTerrainBin(file, options.world, options.roomNames);
-				buffer = fs.readFileSync(file);
-			} else {
-				buffer = terrainBinFromMeta(recording);
-			}
 		}
 		if (!buffer) {
 			return json({ error: 'no terrain' }, 404);

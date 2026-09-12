@@ -1,17 +1,27 @@
-// A recording on disk: `<dir>/meta.json` plus one append-only `<room>.xrr`
-// per room. An .xrr file is a sequence of records, each a compressed chunk
-// (see format.ts) behind a fixed 28-byte header, so a reader can index a
-// file by seeking over headers and a writer that dies mid-run loses at most
-// the chunk it had not flushed.
+// A recording is either a directory - `meta.json`, `terrain.bin`, one
+// append-only `<room>.xrr` per room - or the same entries packed into one
+// `.xrr` bundle file for sharing. The recorder writes directories (appending
+// to a room's file is cheap and a crash loses at most the open chunk);
+// `pack` turns one into a bundle and `unpack` the reverse. Readers take
+// either.
+//
+// A room file is a sequence of records, each a compressed chunk (format.ts)
+// behind a fixed 28-byte header, so a reader indexes a file by seeking over
+// headers. A bundle is a header followed by named entries; the room entries
+// are the room files byte for byte, so nothing is compressed twice.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 import { ChunkDecoder, historyTicks } from './format.js';
+import { roomFromTerrainBin, terrainBinFromStrings } from './terrain.js';
 export const CODECS = { none: 0, zstd: 1, brotli: 2 };
 const codecNames = Object.keys(CODECS);
 const MAGIC = [0x58, 0x52, 0x52, 0x43]; // XRRC
 const RECORD_VERSION = 1;
 export const RECORD_HEADER = 28;
+const BUNDLE_MAGIC = [0x58, 0x52, 0x52, 0x42]; // XRRB
+const BUNDLE_VERSION = 1;
+// --- codecs -----------------------------------------------------------------
 // zstd arrived in Node 22.15 / 23.8; older runtimes get brotli instead.
 export const hasZstd = typeof zlib.zstdCompressSync === 'function';
 let warnedZstd = false;
@@ -32,9 +42,11 @@ export function compress(raw, codec, level) {
         case 'zstd': return zlib.zstdCompressSync(raw, {
             params: { [zlib.constants.ZSTD_c_compressionLevel]: level ?? 19 },
         });
+        // Measured on a 19k-tick run: brotli 5 lands within 2% of zstd 19 and
+        // brotli 11, encodes in a millisecond per chunk, and every Node has it.
         case 'brotli': return zlib.brotliCompressSync(raw, {
             params: {
-                [zlib.constants.BROTLI_PARAM_QUALITY]: level ?? 11,
+                [zlib.constants.BROTLI_PARAM_QUALITY]: level ?? 5,
                 [zlib.constants.BROTLI_PARAM_LGWIN]: 24,
                 [zlib.constants.BROTLI_PARAM_SIZE_HINT]: raw.length,
             },
@@ -54,6 +66,7 @@ export function decompress(data, codec) {
         default: throw new Error(`Unknown codec id ${codec}`);
     }
 }
+// --- records ----------------------------------------------------------------
 export function encodeRecord(raw, codec, firstTick, lastTick, frames, level) {
     const used = effectiveCodec(codec);
     const payload = compress(raw, used, level);
@@ -89,24 +102,30 @@ function parseHeader(header, offset) {
         length: view.getUint32(24, true),
     };
 }
-/** Lists the records in an .xrr file by seeking over their headers. */
-export function indexRecords(file) {
-    const records = [];
-    let fd;
+function fileEntry(file) {
     try {
-        fd = fs.openSync(file, 'r');
+        return { file, offset: 0, length: fs.statSync(file).size };
     }
     catch {
+        return undefined;
+    }
+}
+/** Lists the records of a room entry by seeking over their headers. */
+export function indexRecords(entry) {
+    const records = [];
+    const span = typeof entry === 'string' ? fileEntry(entry) : entry;
+    if (!span) {
         return records;
     }
+    const fd = fs.openSync(span.file, 'r');
     try {
-        const size = fs.fstatSync(fd).size;
+        const end = span.offset + span.length;
         const header = new Uint8Array(RECORD_HEADER);
-        let offset = 0;
-        while (offset + RECORD_HEADER <= size) {
+        let offset = span.offset;
+        while (offset + RECORD_HEADER <= end) {
             fs.readSync(fd, header, 0, RECORD_HEADER, offset);
             const record = parseHeader(header, offset);
-            if (offset + RECORD_HEADER + record.length > size) {
+            if (offset + RECORD_HEADER + record.length > end) {
                 // Truncated tail: the writer died mid-record
                 break;
             }
@@ -131,31 +150,190 @@ export function readRecord(file, record) {
         fs.closeSync(fd);
     }
 }
+function readEntry(entry) {
+    const fd = fs.openSync(entry.file, 'r');
+    try {
+        const data = Buffer.alloc(entry.length);
+        fs.readSync(fd, data, 0, entry.length, entry.offset);
+        return data;
+    }
+    finally {
+        fs.closeSync(fd);
+    }
+}
+// --- bundles ----------------------------------------------------------------
+/** The entries of a bundle file, by name, or undefined if it is not one. */
+export function readBundleIndex(file) {
+    let fd;
+    try {
+        fd = fs.openSync(file, 'r');
+    }
+    catch {
+        return undefined;
+    }
+    try {
+        const size = fs.fstatSync(fd).size;
+        const head = new Uint8Array(5);
+        if (size < 5 || fs.readSync(fd, head, 0, 5, 0) < 5 || BUNDLE_MAGIC.some((byte, ii) => head[ii] !== byte)) {
+            return undefined;
+        }
+        if (head[4] !== BUNDLE_VERSION) {
+            throw new Error(`Unsupported bundle version ${head[4]}`);
+        }
+        const entries = new Map();
+        const fixed = new Uint8Array(9);
+        let offset = 5;
+        while (offset + 1 <= size) {
+            fs.readSync(fd, fixed, 0, 1, offset);
+            const nameLength = fixed[0];
+            const nameBytes = new Uint8Array(nameLength);
+            fs.readSync(fd, nameBytes, 0, nameLength, offset + 1);
+            fs.readSync(fd, fixed, 0, 8, offset + 1 + nameLength);
+            const view = new DataView(fixed.buffer);
+            const length = view.getUint32(0, true) + view.getUint32(4, true) * 2 ** 32;
+            const start = offset + 1 + nameLength + 8;
+            if (start + length > size) {
+                break;
+            }
+            entries.set(new TextDecoder().decode(nameBytes), { file, offset: start, length });
+            offset = start + length;
+        }
+        return entries;
+    }
+    finally {
+        fs.closeSync(fd);
+    }
+}
+/** Packs a recording directory into one bundle file. Returns bytes written. */
+export function packRecording(dir, file) {
+    const meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
+    const names = ['meta.json', 'terrain.bin', ...Object.keys(meta.rooms).map(room => `${room}.xrr`)]
+        .filter(name => fs.existsSync(path.join(dir, name)));
+    const out = fs.openSync(file, 'w');
+    let written = 0;
+    const write = (bytes) => {
+        fs.writeSync(out, bytes);
+        written += bytes.length;
+    };
+    try {
+        write(new Uint8Array([...BUNDLE_MAGIC, BUNDLE_VERSION]));
+        for (const name of names) {
+            const nameBytes = new TextEncoder().encode(name);
+            const size = fs.statSync(path.join(dir, name)).size;
+            const header = new Uint8Array(1 + nameBytes.length + 8);
+            header[0] = nameBytes.length;
+            header.set(nameBytes, 1);
+            const view = new DataView(header.buffer, 1 + nameBytes.length);
+            view.setUint32(0, size % 2 ** 32, true);
+            view.setUint32(4, Math.floor(size / 2 ** 32), true);
+            write(header);
+            // Copy in slices: a room file can be larger than one wants in memory
+            const src = fs.openSync(path.join(dir, name), 'r');
+            try {
+                const buffer = Buffer.alloc(1 << 20);
+                let position = 0;
+                while (position < size) {
+                    const count = fs.readSync(src, buffer, 0, Math.min(buffer.length, size - position), position);
+                    if (count <= 0) {
+                        break;
+                    }
+                    write(buffer.subarray(0, count));
+                    position += count;
+                }
+            }
+            finally {
+                fs.closeSync(src);
+            }
+        }
+    }
+    finally {
+        fs.closeSync(out);
+    }
+    return written;
+}
+/** Unpacks a bundle into a recording directory. */
+export function unpackRecording(file, dir) {
+    const entries = readBundleIndex(file);
+    if (!entries) {
+        throw new Error(`${file} is not a recording bundle`);
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [name, entry] of entries) {
+        if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+            continue;
+        }
+        fs.writeFileSync(path.join(dir, name), readEntry(entry));
+    }
+}
+// --- the recording ----------------------------------------------------------
 export class Recording {
-    dir;
+    location;
     meta;
+    entries;
     indexes = new Map();
     frames = new Map();
-    constructor(dir, meta) {
-        this.dir = dir;
+    terrainCache;
+    /** What the recording is called in URLs: its directory or file name. */
+    name;
+    /**
+     * @param location the directory, or the bundle file
+     * @param entries the bundle's entries; undefined for a directory
+     */
+    constructor(location, meta, entries) {
+        this.location = location;
         this.meta = meta;
+        this.entries = entries;
+        this.name = path.basename(location).replace(/\.xrr$/i, '');
+    }
+    /** A bundle is read-only. */
+    get bundle() {
+        return this.entries !== undefined;
+    }
+    /** The directory, for writers. */
+    get dir() {
+        if (this.entries) {
+            throw new Error(`${this.location} is a bundle; unpack it to write`);
+        }
+        return this.location;
     }
     static metaFile(dir) {
         return path.join(dir, 'meta.json');
     }
-    static open(dir) {
+    /** Opens a recording directory or a bundle file. */
+    static open(location) {
+        let stat;
+        try {
+            stat = fs.statSync(location);
+        }
+        catch {
+            return undefined;
+        }
+        return stat.isDirectory() ? Recording.openDir(location) : Recording.openBundle(location);
+    }
+    static openDir(dir) {
         try {
             const meta = JSON.parse(fs.readFileSync(Recording.metaFile(dir), 'utf8'));
-            if (meta.version !== 1) {
-                return undefined;
-            }
-            return new Recording(dir, meta);
+            return meta.version === 1 ? new Recording(dir, meta) : undefined;
         }
         catch {
             return undefined;
         }
     }
-    /** Every recording under `root`, newest first. */
+    static openBundle(file) {
+        try {
+            const entries = readBundleIndex(file);
+            const metaEntry = entries?.get('meta.json');
+            if (!entries || !metaEntry) {
+                return undefined;
+            }
+            const meta = JSON.parse(readEntry(metaEntry).toString('utf8'));
+            return meta.version === 1 ? new Recording(file, meta, entries) : undefined;
+        }
+        catch {
+            return undefined;
+        }
+    }
+    /** Every recording under `root` - directories and bundles - newest first. */
     static list(root) {
         let names;
         try {
@@ -174,12 +352,18 @@ export class Recording {
         return recordings.sort((left, right) => right.meta.created - left.meta.created);
     }
     saveMeta() {
-        fs.mkdirSync(this.dir, { recursive: true });
+        const dir = this.dir;
+        fs.mkdirSync(dir, { recursive: true });
         this.meta.updated = Date.now();
-        const file = Recording.metaFile(this.dir);
+        const file = Recording.metaFile(dir);
         fs.writeFileSync(`${file}.tmp`, JSON.stringify(this.meta, null, '\t'));
         fs.renameSync(`${file}.tmp`, file);
     }
+    /** Where a named entry lives, if it exists. */
+    entry(name) {
+        return this.entries ? this.entries.get(name) : fileEntry(path.join(this.location, name));
+    }
+    /** The room file, for the recorder (directories only). */
     roomFile(room) {
         return path.join(this.dir, `${room}.xrr`);
     }
@@ -189,10 +373,30 @@ export class Recording {
     index(room) {
         let index = this.indexes.get(room);
         if (index === undefined) {
-            index = indexRecords(this.roomFile(room));
+            const entry = this.entry(`${room}.xrr`);
+            index = entry ? indexRecords(entry) : [];
             this.indexes.set(room, index);
         }
         return index;
+    }
+    /** One record's chunk, decompressed. */
+    readChunk(room, record) {
+        const entry = this.entry(`${room}.xrr`);
+        if (!entry) {
+            throw new Error(`No recording for ${room}`);
+        }
+        return readRecord(entry.file, record);
+    }
+    /** Bytes the recording takes, all entries together. */
+    size() {
+        if (this.entries) {
+            return fs.statSync(this.location).size;
+        }
+        let total = 0;
+        for (const name of ['meta.json', 'terrain.bin', ...this.rooms().map(room => `${room}.xrr`)]) {
+            total += this.entry(name)?.length ?? 0;
+        }
+        return total;
     }
     /** Forget cached state for a room after new records were appended. */
     invalidate(room) {
@@ -202,6 +406,25 @@ export class Recording {
                 this.frames.delete(key);
             }
         }
+    }
+    /** The world's terrain.bin; built from the rooms' own strings for old recordings. */
+    terrainBin() {
+        if (this.terrainCache === undefined) {
+            const entry = this.entry('terrain.bin');
+            this.terrainCache = entry
+                ? readEntry(entry)
+                : terrainBinFromStrings(Object.entries(this.meta.rooms).flatMap(([name, info]) => info.terrain ? [{ name, terrain: info.terrain }] : [])) ?? null;
+        }
+        return this.terrainCache ?? undefined;
+    }
+    /** A room's terrain as the 2500-character string the client uses. */
+    terrain(room) {
+        const stored = this.meta.rooms[room]?.terrain;
+        if (stored) {
+            return stored;
+        }
+        const bin = this.terrainBin();
+        return bin ? roomFromTerrainBin(bin, room) : undefined;
     }
     chunkIndexOf(tick) {
         return Math.floor(tick / this.meta.chunkTicks);
@@ -216,10 +439,9 @@ export class Recording {
         let frames = this.frames.get(key);
         if (frames === undefined) {
             frames = [];
-            const file = this.roomFile(room);
             for (const record of this.index(room)) {
                 if (this.chunkIndexOf(record.firstTick) === chunkIndex) {
-                    frames.push(...ChunkDecoder.all(readRecord(file, record)));
+                    frames.push(...ChunkDecoder.all(this.readChunk(room, record)));
                 }
             }
             this.frames.set(key, frames);

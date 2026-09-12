@@ -12,7 +12,8 @@ import { runOneShot } from 'xxscreeps/game/index.js';
 import { ChunkEncoder } from './format.js';
 import { Recording, encodeRecord } from './recording.js';
 import { badgeFromFile } from './badge.js';
-import { finishEventScan, scanFrameEvents, writeTerrainBin } from './viewer.js';
+import { writeTerrainBin } from './terrain.js';
+import { finishEventScan, scanFrameEvents } from './viewer.js';
 const isSystemUser = (userId) => userId.length <= 2;
 class RoomRecorder {
     name;
@@ -239,15 +240,8 @@ export class Recorder {
     record(name, room, time, asUser) {
         let recorder = this.rooms.get(name);
         if (recorder === undefined) {
+            // Terrain lives in terrain.bin, written at start for the whole world
             const meta = { firstTick: time, lastTick: time, chunks: 0, frames: 0, bytes: 0 };
-            const terrain = this.world.map.getRoomTerrain(name);
-            let terrainString = '';
-            for (let yy = 0; yy < 50; ++yy) {
-                for (let xx = 0; xx < 50; ++xx) {
-                    terrainString += terrain.get(xx, yy);
-                }
-            }
-            meta.terrain = terrainString;
             this.recording.meta.rooms[name] = meta;
             recorder = new RoomRecorder(name, meta, this.recording.roomFile(name));
             this.rooms.set(name, recorder);

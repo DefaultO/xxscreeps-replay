@@ -19,7 +19,8 @@ import type { Frame, Objects } from './format.js';
 import { Recording, encodeRecord } from './recording.js';
 import type { RecordingMeta, RoomMeta, UserInfo } from './recording.js';
 import { badgeFromFile } from './badge.js';
-import { finishEventScan, scanFrameEvents, writeTerrainBin } from './viewer.js';
+import { writeTerrainBin } from './terrain.js';
+import { finishEventScan, scanFrameEvents } from './viewer.js';
 import type { EventScanState } from './viewer.js';
 
 const isSystemUser = (userId: string) => userId.length <= 2;
@@ -263,15 +264,8 @@ export class Recorder {
 	private record(name: string, room: Room, time: number, asUser: string) {
 		let recorder = this.rooms.get(name);
 		if (recorder === undefined) {
+			// Terrain lives in terrain.bin, written at start for the whole world
 			const meta: RoomMeta = { firstTick: time, lastTick: time, chunks: 0, frames: 0, bytes: 0 };
-			const terrain = this.world!.map.getRoomTerrain(name);
-			let terrainString = '';
-			for (let yy = 0; yy < 50; ++yy) {
-				for (let xx = 0; xx < 50; ++xx) {
-					terrainString += terrain.get(xx, yy);
-				}
-			}
-			meta.terrain = terrainString;
 			this.recording.meta.rooms[name] = meta;
 			recorder = new RoomRecorder(name, meta, this.recording.roomFile(name));
 			this.rooms.set(name, recorder);

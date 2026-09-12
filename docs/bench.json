@@ -1,0 +1,68 @@
+{
+	"recording": "defaulto-rcl5",
+	"rooms": 9,
+	"frames": 84676,
+	"ticks": 19201,
+	"node": "v24.19.0",
+	"codecs": [
+		{
+			"name": "brotli 5 (default)",
+			"bytes": 2545210,
+			"bytesPerFrame": 30.05822192829137,
+			"encodeMs": 564,
+			"decodeMs": 58
+		},
+		{
+			"name": "brotli 11",
+			"bytes": 2327445,
+			"bytesPerFrame": 27.486477868581417,
+			"encodeMs": 19711,
+			"decodeMs": 71
+		},
+		{
+			"name": "zstd 19",
+			"bytes": 2511548,
+			"bytesPerFrame": 29.66068307430677,
+			"encodeMs": 5297,
+			"decodeMs": 52
+		},
+		{
+			"name": "zstd 3",
+			"bytes": 2751468,
+			"bytesPerFrame": 32.494071519674996,
+			"encodeMs": 97,
+			"decodeMs": 30
+		},
+		{
+			"name": "none",
+			"bytes": 10379858,
+			"bytesPerFrame": 122.58323491898531,
+			"encodeMs": 0,
+			"decodeMs": 0
+		}
+	],
+	"rawChunkBytes": 10379858,
+	"formats": [
+		{
+			"name": "room socket JSON, every tick",
+			"bytes": 889019356,
+			"bytesPerFrame": 10499.071236241674
+		},
+		{
+			"name": "room-history JSON (screeps.com API)",
+			"bytes": 81167365,
+			"bytesPerFrame": 958.5639968822335
+		},
+		{
+			"name": "room-history JSON, gzipped (served, archived)",
+			"bytes": 7401094,
+			"bytesPerFrame": 87.40486088147763
+		},
+		{
+			"name": ".xrr (zstd)",
+			"bytes": 2524568,
+			"bytesPerFrame": 29.814445651660446
+		}
+	],
+	"windows": 896
+}

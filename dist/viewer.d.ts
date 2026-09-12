@@ -12,16 +12,6 @@ export interface ViewerContext {
     set(field: string, value: string): void;
     redirect(url: string): void;
 }
-export declare function parseRoomName(name: string): {
-    wx: number;
-    wy: number;
-} | undefined;
-/**
- * Writes the world's terrain in the viewer's layout: a square grid of rooms
- * centred on the origin, 2 bits a tile in row-major order. Rooms the world
- * does not have are solid wall.
- */
-export declare function writeTerrainBin(file: string, world: World, roomNames: Iterable<string>): void;
 /**
  * Controller changes and invader raids seen in one room's frames, appended
  * to `events`. `state` carries what was last seen so a scan can continue

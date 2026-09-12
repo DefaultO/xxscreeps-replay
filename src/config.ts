@@ -19,10 +19,12 @@
 //     asUser: abc123         # render as this user (private says); default: the only player
 //     log: true              # a progress line every 1000 ticks
 //     viewer: ../shardreplay/web   # shardreplay's page, served as the world view at /replay/<name>/map/
+//     badges: ./badges       # <username>.json badge objects (stored for the user when seen)
+//                            # and <username>.svg images (served as that user's badge)
 //
 // Environment overrides, for launchers: XX_REPLAY=0 disables recording,
-// XX_REPLAY_NAME, XX_REPLAY_DIR and XX_REPLAY_VIEWER set the name, the
-// directory and the viewer.
+// XX_REPLAY_NAME, XX_REPLAY_DIR, XX_REPLAY_VIEWER and XX_REPLAY_BADGES set
+// the name, the directory, the viewer and the badges directory.
 
 export type Codec = 'none' | 'zstd' | 'brotli';
 
@@ -40,6 +42,7 @@ export type Schema = {
 		asUser?: string;
 		log?: boolean;
 		viewer?: string;
+		badges?: string;
 	};
 };
 

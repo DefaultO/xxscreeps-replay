@@ -15,7 +15,8 @@ I wrote it to look at bot speedruns on a private server. A full run to RCL5
 
 ## Requirements
 
-- An xxscreeps server. Node 24 or newer (the codec uses Node's zstd).
+- An [xxscreeps](https://github.com/laverdet/xxscreeps) server running on
+  Node 24 or newer (the codec uses Node's zstd).
 - [`@xxscreeps/client`](https://github.com/laverdet/xxscreeps/tree/main/packages/client),
   the mod that serves the official browser client from your Steam install of
   Screeps. All playback happens in that client, so without it there is nothing
@@ -111,19 +112,46 @@ otherwise only does on its own schedule.
 
 ### Badges
 
-Recordings keep each player's badge, so replays show it even when the player
-no longer exists on the server. If you want your persistent-world badge on a
-private server, get it from `https://screeps.com/api/user/find?username=YOU`
-and post it while signed in:
+Recordings keep each player's badge, so replays show it even after the player
+is gone from the server. Users created on a private server have no badge at
+all; the mod then draws a plain disc.
+
+The easiest way to give a user a badge is a file. Create a `badges` directory
+next to `.screepsrc.yaml` (or set `replay.badges`) and put one of these in it:
+
+- `badges/<username>.json`, a badge object. To use your persistent-world
+  badge, save what `https://screeps.com/api/user/find?username=<username>`
+  returns; the mod accepts the whole response or just the `badge` part. The
+  recorder stores the badge for that user as soon as it sees them, so the
+  client draws it everywhere, and the recording keeps a copy.
+- `badges/<username>.svg`, an image. It is served as that user's badge image
+  wherever a badge is shown as an image (the world map, the room view's owner
+  icon). Nothing is written to the database.
+
+Files are re-read when they change; no restart needed.
+
+The same can be done over the API, for example from a script that sets up
+users. Sign in to get a token, then post the badge with it:
 
 ```sh
+TOKEN=$(curl -s -X POST http://localhost:21025/api/auth/signin \
+  -H 'Content-Type: application/json' \
+  -d '{"email": "<username>", "password": "<password>"}' | jq -r .token)
+
 curl -X POST http://localhost:21025/replay/badge \
   -H 'Content-Type: application/json' -H "X-Token: $TOKEN" \
-  -d '{"badge": {...}}'
+  -d '{"badge": {"type": {"path1": "...", "path2": "..."}, "color1": "#...", "color2": "#...", "color3": "#..."}}'
 ```
 
-The stock badge route only accepts the 24 built-in shapes; this one also takes
-custom badges.
+`/api/auth/signin` is the password login xxscreeps ships
+(`xxscreeps/mods/backend/password`); the `email` field takes the username.
+Every authenticated request carries the token in the `X-Token` header, and
+the server may answer with a new token in its own `X-Token` header, which
+replaces the old one.
+
+xxscreeps' own `/api/user/badge` only accepts the 24 built-in shapes;
+`/replay/badge` also takes custom badges, which is what the persistent world
+gives most players.
 
 ## Configuration
 
@@ -142,10 +170,12 @@ All keys under `replay:` in `.screepsrc.yaml`.
 | `level` | codec default | compression level |
 | `asUser` | the only player | render as this user (affects private `say` messages) |
 | `viewer` | | path to shardreplay's `web` directory |
+| `badges` | `./badges` | directory of `<username>.json` and `<username>.svg` badge files |
 | `log` | `true` | progress line every 1000 ticks |
 
-Environment variables `XX_REPLAY`, `XX_REPLAY_NAME`, `XX_REPLAY_DIR` and
-`XX_REPLAY_VIEWER` override `enabled`, `name`, `dir` and `viewer`.
+Environment variables `XX_REPLAY`, `XX_REPLAY_NAME`, `XX_REPLAY_DIR`,
+`XX_REPLAY_VIEWER` and `XX_REPLAY_BADGES` override `enabled`, `name`, `dir`,
+`viewer` and `badges`.
 
 ## Command line
 

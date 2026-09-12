@@ -40,6 +40,8 @@ export declare function finishEventScan(room: string, state: EventScanState, eve
 export interface ViewerOptions {
     /** The shardreplay `web` directory. */
     dir: string | undefined;
+    /** Directory of `<username>.svg` badge images. */
+    badges?: string;
     /** The live world, for a recording that has no terrain.bin of its own. */
     world?: World;
     roomNames?: Iterable<string>;

@@ -18,7 +18,7 @@
 //   terrain.bin                2 bits a tile, 625 bytes a room, a dim x dim grid
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { customBadgeSvg, isCustomBadge } from './badge.js';
+import { badgeSvgFromFile, customBadgeSvg, isCustomBadge } from './badge.js';
 import { ChunkDecoder, historyTicks } from './format.js';
 import { indexRecords, readRecord } from './recording.js';
 const WINDOW = 100;
@@ -509,6 +509,14 @@ export async function serveViewer(context, recording, rest, options) {
     if (badge) {
         const id = decodeURIComponent(badge[1]);
         const user = meta.users[id];
+        const fromFile = user ? badgeSvgFromFile(options.badges, user.username) : undefined;
+        if (fromFile !== undefined) {
+            context.status = 200;
+            context.type = 'image/svg+xml';
+            context.set('Cache-Control', 'no-cache');
+            context.body = fromFile;
+            return true;
+        }
         if (user && isCustomBadge(user.badge)) {
             context.status = 200;
             context.type = 'image/svg+xml';

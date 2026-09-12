@@ -13,6 +13,7 @@ export type Schema = {
         asUser?: string;
         log?: boolean;
         viewer?: string;
+        badges?: string;
     };
 };
 export declare const defaults: {

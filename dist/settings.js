@@ -27,6 +27,7 @@ export function replayConfig() {
         asUser: raw.asUser,
         log: raw.log !== false,
         viewer: env.XX_REPLAY_VIEWER ?? raw.viewer,
+        badges: env.XX_REPLAY_BADGES ?? raw.badges ?? './badges',
     };
 }
 //# sourceMappingURL=settings.js.map

@@ -20,7 +20,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { World } from 'xxscreeps/game/map.js';
-import { customBadgeSvg, isCustomBadge } from './badge.js';
+import { badgeSvgFromFile, customBadgeSvg, isCustomBadge } from './badge.js';
 import type { Frame } from './format.js';
 import { ChunkDecoder, historyTicks } from './format.js';
 import type { Recording, RecordingEvent } from './recording.js';
@@ -358,6 +358,8 @@ function seasonPayload(recording: Recording) {
 export interface ViewerOptions {
 	/** The shardreplay `web` directory. */
 	dir: string | undefined;
+	/** Directory of `<username>.svg` badge images. */
+	badges?: string;
 	/** The live world, for a recording that has no terrain.bin of its own. */
 	world?: World;
 	roomNames?: Iterable<string>;
@@ -560,6 +562,14 @@ export async function serveViewer(context: ViewerContext, recording: Recording, 
 	if (badge) {
 		const id = decodeURIComponent(badge[1]!);
 		const user = meta.users[id];
+		const fromFile = user ? badgeSvgFromFile(options.badges, user.username) : undefined;
+		if (fromFile !== undefined) {
+			context.status = 200;
+			context.type = 'image/svg+xml';
+			context.set('Cache-Control', 'no-cache');
+			context.body = fromFile;
+			return true;
+		}
 		if (user && isCustomBadge(user.badge)) {
 			context.status = 200;
 			context.type = 'image/svg+xml';

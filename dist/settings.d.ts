@@ -13,5 +13,7 @@ export interface ReplayConfig {
     log: boolean;
     /** The shardreplay `web` directory that serves as the world view. */
     viewer: string | undefined;
+    /** Directory of `<username>.json` / `<username>.svg` badge files. */
+    badges: string;
 }
 export declare function replayConfig(): ReplayConfig;

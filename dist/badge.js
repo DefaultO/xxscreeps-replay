@@ -33,6 +33,61 @@ export function plainBadgeSvg(seed) {
     const hue = hash % 360;
     return `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="hsl(${hue},45%,35%)"/><circle cx="50" cy="50" r="24" fill="hsl(${hue},55%,60%)"/></svg>`;
 }
+// --- badges from files ------------------------------------------------------
+//
+// `<badges dir>/<username>.json` is a badge object as the API returns it
+// (`https://screeps.com/api/user/find?username=...` → `user.badge`); the
+// recorder stores it for that user when it sees them, so the client draws it
+// everywhere. `<username>.svg` is served as that user's badge image instead
+// of the rendered one (the world map and the badge-svg route), no database
+// involved.
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+const files = new Map();
+function readFile(file) {
+    let stat;
+    try {
+        stat = fs.statSync(file);
+    }
+    catch {
+        files.delete(file);
+        return null;
+    }
+    const cached = files.get(file);
+    if (cached && cached.mtime === stat.mtimeMs) {
+        return cached;
+    }
+    const entry = { mtime: stat.mtimeMs };
+    try {
+        if (file.endsWith('.json')) {
+            const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+            // Either the badge itself or the whole `user/find` response
+            const badge = parsed?.badge ?? parsed?.user?.badge ?? parsed;
+            if (isStorableBadge(badge)) {
+                entry.badge = badge;
+            }
+        }
+        else {
+            entry.svg = fs.readFileSync(file, 'utf8');
+        }
+    }
+    catch {
+        // unreadable: treated as absent until it changes
+    }
+    files.set(file, entry);
+    return entry;
+}
+const safeName = (username) => /^[A-Za-z0-9_-]{1,32}$/.test(username) ? username : undefined;
+/** The badge object from `<dir>/<username>.json`, if there is one. */
+export function badgeFromFile(dir, username) {
+    const name = dir && safeName(username);
+    return name ? readFile(path.join(dir, `${name}.json`))?.badge : undefined;
+}
+/** The SVG from `<dir>/<username>.svg`, if there is one. */
+export function badgeSvgFromFile(dir, username) {
+    const name = dir && safeName(username);
+    return name ? readFile(path.join(dir, `${name}.svg`))?.svg : undefined;
+}
 /** Loose check for a badge a player may store: the stock shape or a custom one. */
 export function isStorableBadge(badge) {
     if (!badge || typeof badge !== 'object') {

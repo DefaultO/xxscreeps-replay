@@ -11,6 +11,7 @@ import { userToPresenceRoomsSetKey } from 'xxscreeps/engine/processor/model.js';
 import { runOneShot } from 'xxscreeps/game/index.js';
 import { ChunkEncoder } from './format.js';
 import { Recording, encodeRecord } from './recording.js';
+import { badgeFromFile } from './badge.js';
 import { finishEventScan, scanFrameEvents, writeTerrainBin } from './viewer.js';
 const isSystemUser = (userId) => userId.length <= 2;
 class RoomRecorder {
@@ -169,6 +170,16 @@ export class Recorder {
         this.users = users;
         const { meta } = this.recording;
         for (const [id, info] of users) {
+            // A badge file for the name replaces whatever the database has, so
+            // a private-server user can wear a badge without an API call
+            const fromFile = badgeFromFile(this.config.badges, info.username);
+            if (fromFile !== undefined && JSON.stringify(fromFile) !== JSON.stringify(info.badge)) {
+                await this.db.data.hset(User.infoKey(id), 'badge', JSON.stringify(fromFile));
+                info.badge = fromFile;
+                if (this.config.log) {
+                    console.log(`replay: badge for ${info.username} taken from ${this.config.badges}`);
+                }
+            }
             meta.users[id] = info;
         }
     }

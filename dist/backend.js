@@ -13,7 +13,7 @@
 // and socket work unchanged.
 import { hooks } from 'xxscreeps/backend/index.js';
 import * as User from 'xxscreeps/engine/db/user/index.js';
-import { customBadgeSvg, isCustomBadge, isStorableBadge, plainBadgeSvg } from './badge.js';
+import { badgeSvgFromFile, customBadgeSvg, isCustomBadge, isStorableBadge, plainBadgeSvg } from './badge.js';
 import { indexPage } from './index-page.js';
 import { serveViewer } from './viewer.js';
 /** The replay code the client's history view carries: `<recording>~<room>`. */
@@ -189,7 +189,7 @@ hooks.register('middleware', koa => {
             if (rest === '/api/user/badge-svg' && typeof context.query.username === 'string') {
                 const username = context.query.username;
                 const entry = Object.values(recording.meta.users).find(user => user.username === username);
-                if (entry && isCustomBadge(entry.badge)) {
+                if (entry && isCustomBadge(entry.badge) && badgeSvgFromFile(config.badges, username) === undefined) {
                     context.type = 'image/svg+xml';
                     context.set('Cache-Control', 'public, max-age=3600');
                     context.body = customBadgeSvg(entry.badge, context.query.border === '1');
@@ -200,6 +200,7 @@ hooks.register('middleware', koa => {
                 // The world view: shardreplay's page over this recording
                 const handled = await serveViewer(context, recording, rest.slice('/map'.length), {
                     dir: config.viewer,
+                    badges: config.badges,
                     world: context.backend.world,
                     roomNames: context.backend.accessibleRooms,
                 });
@@ -232,6 +233,16 @@ hooks.register('middleware', koa => {
             }
             else {
                 context.path = rest;
+            }
+        }
+        // A badge image on disk wins over anything rendered, live or recorded
+        if (context.path === '/api/user/badge-svg' && typeof context.query.username === 'string') {
+            const svg = badgeSvgFromFile(config.badges, context.query.username);
+            if (svg !== undefined) {
+                context.type = 'image/svg+xml';
+                context.set('Cache-Control', 'no-cache');
+                context.body = svg;
+                return;
             }
         }
         // Recorded users are answered from the recording, live ones from the db.
